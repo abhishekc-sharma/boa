@@ -234,7 +234,7 @@ impl Context {
                         target.type_of()
                     )));
                 };
-                let handler = target.get_method(self, WellKnownSymbols::has_instance())?;
+                let handler = target.get_method(WellKnownSymbols::has_instance(), self)?;
                 if !handler.is_undefined() {
                     let value = self.call(&handler, &target, &[v.clone()])?.to_boolean();
                     self.vm.push(value);
