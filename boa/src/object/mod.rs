@@ -6,7 +6,7 @@ use crate::{
         map::map_iterator::MapIterator, map::ordered_map::OrderedMap,
         regexp::regexp_string_iterator::RegExpStringIterator, set::ordered_set::OrderedSet,
         set::set_iterator::SetIterator, string::string_iterator::StringIterator,
-        typed_array::IntegerIndexed, Date, RegExp,
+        typed_array::integer_indexed_object::IntegerIndexed, Date, RegExp,
     },
     context::StandardConstructor,
     gc::{Finalize, Trace},
