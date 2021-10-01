@@ -17,6 +17,7 @@ use crate::{
 };
 use gc::{Finalize, Trace};
 use num_bigint::BigInt;
+use num_integer::Integer;
 use num_traits::Zero;
 use std::{
     collections::HashSet,
@@ -425,9 +426,12 @@ impl JsValue {
         }
     }
 
-    /// Converts the value to a `BigInt`.
+    /// `7.1.13 ToBigInt ( argument )`
     ///
-    /// This function is equivelent to `BigInt(value)` in JavaScript.
+    /// More information:
+    ///  - [ECMAScript reference][spec]
+    ///
+    /// [spec]: https://tc39.es/ecma262/#sec-tobigint
     pub fn to_bigint(&self, context: &mut Context) -> JsResult<JsBigInt> {
         match self {
             JsValue::Null => Err(context.construct_type_error("cannot convert null to a BigInt")),
@@ -446,15 +450,8 @@ impl JsValue {
             }
             JsValue::Boolean(true) => Ok(JsBigInt::one()),
             JsValue::Boolean(false) => Ok(JsBigInt::zero()),
-            JsValue::Integer(num) => Ok(JsBigInt::new(*num)),
-            JsValue::Rational(num) => {
-                if let Ok(bigint) = JsBigInt::try_from(*num) {
-                    return Ok(bigint);
-                }
-                Err(context.construct_type_error(format!(
-                    "The number {} cannot be converted to a BigInt because it is not an integer",
-                    num
-                )))
+            JsValue::Integer(_) | JsValue::Rational(_) => {
+                Err(context.construct_type_error("cannot convert Number to a BigInt"))
             }
             JsValue::BigInt(b) => Ok(b.clone()),
             JsValue::Object(_) => {
@@ -790,16 +787,16 @@ impl JsValue {
     ///
     /// [spec]: https://tc39.es/ecma262/#sec-tobigint64
     pub fn to_big_int64(&self, context: &mut Context) -> JsResult<BigInt> {
-        let two_e_64: u128 = 18446744073709551616;
+        let two_e_64: u128 = 0x1_0000_0000_0000_0000;
         let two_e_64 = BigInt::from(two_e_64);
-        let two_e_63: u128 = 9223372036854775808;
+        let two_e_63: u128 = 0x8000_0000_0000_0000;
         let two_e_63 = BigInt::from(two_e_63);
 
         // 1. Let n be ? ToBigInt(argument).
         let n = self.to_bigint(context)?;
 
         // 2. Let int64bit be ℝ(n) modulo 2^64.
-        let int64_bit = n.as_inner() % &two_e_64;
+        let int64_bit = n.as_inner().mod_floor(&two_e_64);
 
         // 3. If int64bit ≥ 2^63, return ℤ(int64bit - 2^64); otherwise return ℤ(int64bit).
         if int64_bit >= two_e_63 {
@@ -816,17 +813,15 @@ impl JsValue {
     ///
     /// [spec]: https://tc39.es/ecma262/#sec-tobiguint64
     pub fn to_big_uint64(&self, context: &mut Context) -> JsResult<BigInt> {
-        let two_e_64: u128 = 18446744073709551616;
+        let two_e_64: u128 = 0x1_0000_0000_0000_0000;
         let two_e_64 = BigInt::from(two_e_64);
 
         // 1. Let n be ? ToBigInt(argument).
         let n = self.to_bigint(context)?;
 
         // 2. Let int64bit be ℝ(n) modulo 2^64.
-        let int64_bit = n.as_inner() % two_e_64;
-
-        // 3. If int64bit ≥ 2^63, return ℤ(int64bit - 2^64); otherwise return ℤ(int64bit).
-        Ok(int64_bit)
+        // 3. Return ℤ(int64bit).
+        Ok(n.as_inner().mod_floor(&two_e_64))
     }
 
     /// Converts a value to a non-negative integer if it is a valid integer index value.

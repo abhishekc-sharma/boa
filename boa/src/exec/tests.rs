@@ -912,8 +912,8 @@ fn to_bigint() {
 
     assert!(JsValue::null().to_bigint(&mut context).is_err());
     assert!(JsValue::undefined().to_bigint(&mut context).is_err());
-    assert!(JsValue::new(55).to_bigint(&mut context).is_ok());
-    assert!(JsValue::new(10.0).to_bigint(&mut context).is_ok());
+    assert!(JsValue::new(55).to_bigint(&mut context).is_err());
+    assert!(JsValue::new(10.0).to_bigint(&mut context).is_err());
     assert!(JsValue::new("100").to_bigint(&mut context).is_ok());
 }
 

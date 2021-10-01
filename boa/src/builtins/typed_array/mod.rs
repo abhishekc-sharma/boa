@@ -1,7 +1,5 @@
 //! <https://tc39.es/ecma262/#sec-typedarray-objects>
 
-use std::cmp::Ordering;
-
 use crate::{
     builtins::{
         array_buffer::{ArrayBuffer, SharedMemoryOrder},
@@ -20,6 +18,8 @@ use crate::{
     value::{IntegerOrInfinity, JsValue},
     BoaProfiler, Context, JsResult, JsString,
 };
+use num_traits::{Signed, Zero};
+use std::cmp::Ordering;
 
 pub mod integer_indexed_object;
 
@@ -39,9 +39,8 @@ macro_rules! typed_array {
             fn init(context: &mut Context) -> (&'static str, JsValue, Attribute) {
                 let _timer = BoaProfiler::global().start_event(Self::NAME, "init");
 
-                let typed_array_constructor = TypedArray::init(context);
-                let typed_array_constructor_proto =
-                    typed_array_constructor.get("prototype", context).unwrap();
+                let typed_array_constructor = context.typed_array_constructor().constructor();
+                let typed_array_constructor_proto = context.typed_array_constructor().prototype();
 
                 let get_species = FunctionBuilder::native(context, TypedArray::get_species)
                     .name("get [Symbol.species]")
@@ -72,7 +71,7 @@ macro_rules! typed_array {
                     Attribute::READONLY | Attribute::NON_ENUMERABLE | Attribute::PERMANENT,
                 )
                 .custom_prototype(typed_array_constructor.into())
-                .inherit(typed_array_constructor_proto)
+                .inherit(typed_array_constructor_proto.into())
                 .build();
 
                 (Self::NAME, typed_array.into(), Self::attribute())
@@ -220,7 +219,7 @@ impl TypedArray {
 
     const LENGTH: usize = 0;
 
-    fn init(context: &mut Context) -> JsObject {
+    pub(crate) fn init(context: &mut Context) -> JsObject {
         let get_species = FunctionBuilder::native(context, Self::get_species)
             .name("get [Symbol.species]")
             .constructable(false)
@@ -1371,7 +1370,7 @@ impl TypedArray {
 
                 // ii. Let same be IsStrictlyEqual(searchElement, elementK).
                 // iii. If same is true, return 𝔽(k).
-                if args.get_or_undefined(1).strict_equals(&element_k) {
+                if args.get_or_undefined(0).strict_equals(&element_k) {
                     return Ok(k.into());
                 }
             }
@@ -1498,7 +1497,7 @@ impl TypedArray {
         }
 
         // 5. If fromIndex is present, let n be ? ToIntegerOrInfinity(fromIndex); else let n be len - 1.
-        let n = if let Some(n) = args.get(0) {
+        let n = if let Some(n) = args.get(1) {
             n.to_integer_or_infinity(context)?
         } else {
             IntegerOrInfinity::Integer(len - 1)
@@ -1757,9 +1756,12 @@ impl TypedArray {
         } else {
             // a. Let Pk be ! ToString(𝔽(k)).
             // b. Set accumulator to ! Get(O, Pk).
-            // c. Set k to k + 1.
-            k += 1;
-            obj.get(0, context).expect("Get cannot fail here")
+            let accumulator = obj.get(k, context).expect("Get cannot fail here");
+
+            // c. Set k to k - 1.
+            k -= 1;
+
+            accumulator
         };
 
         // 10. Repeat, while k ≥ 0,
@@ -1862,10 +1864,10 @@ impl TypedArray {
         // 5. If targetOffset < 0, throw a RangeError exception.
         match target_offset {
             IntegerOrInfinity::Integer(i) if i < 0 => {
-                return context.throw_type_error("TypedArray.set called with negative offset")
+                return context.throw_range_error("TypedArray.set called with negative offset")
             }
             IntegerOrInfinity::NegativeInfinity => {
-                return context.throw_type_error("TypedArray.set called with negative offset")
+                return context.throw_range_error("TypedArray.set called with negative offset")
             }
             _ => {}
         }
@@ -2154,7 +2156,7 @@ impl TypedArray {
         };
 
         // 11. If srcLength + targetOffset > targetLength, throw a RangeError exception.
-        if src_length + target_offset < target_length {
+        if src_length + target_offset > target_length {
             return Err(context.construct_range_error(
                 "Source object and target offset longer than target typed array",
             ));
@@ -2534,17 +2536,37 @@ impl TypedArray {
                 return Ok(v.partial_cmp(&0.0).unwrap_or(Ordering::Equal));
             }
 
-            // 3. If x and y are both NaN, return +0𝔽.
-            // 4. If x is NaN, return 1𝔽.
-            // 5. If y is NaN, return -1𝔽.
-            // 6. If x < y, return -1𝔽.
-            // 7. If x > y, return 1𝔽.
-            // 8. If x is -0𝔽 and y is +0𝔽, return -1𝔽.
-            // 9. If x is +0𝔽 and y is -0𝔽, return 1𝔽.
-            // 10. Return +0𝔽.
-
             if let (JsValue::BigInt(x), JsValue::BigInt(y)) = (x, y) {
-                Ok(x.cmp(y))
+                // 6. If x < y, return -1𝔽.
+                if x < y {
+                    return Ok(Ordering::Less);
+                }
+
+                // 7. If x > y, return 1𝔽.
+                if x > y {
+                    return Ok(Ordering::Greater);
+                }
+
+                // 8. If x is -0𝔽 and y is +0𝔽, return -1𝔽.
+                if x.is_zero()
+                    && y.is_zero()
+                    && x.as_inner().is_negative()
+                    && y.as_inner().is_positive()
+                {
+                    return Ok(Ordering::Less);
+                }
+
+                // 9. If x is +0𝔽 and y is -0𝔽, return 1𝔽.
+                if x.is_zero()
+                    && y.is_zero()
+                    && x.as_inner().is_positive()
+                    && y.as_inner().is_negative()
+                {
+                    return Ok(Ordering::Greater);
+                }
+
+                // 10. Return +0𝔽.
+                Ok(Ordering::Equal)
             } else {
                 let x = x
                     .as_number()
@@ -2552,7 +2574,44 @@ impl TypedArray {
                 let y = y
                     .as_number()
                     .expect("Typed array can only contain number or bigint");
-                Ok(x.partial_cmp(&y).unwrap_or(Ordering::Equal))
+
+                // 3. If x and y are both NaN, return +0𝔽.
+                if x.is_nan() && y.is_nan() {
+                    return Ok(Ordering::Equal);
+                }
+
+                // 4. If x is NaN, return 1𝔽.
+                if x.is_nan() {
+                    return Ok(Ordering::Greater);
+                }
+
+                // 5. If y is NaN, return -1𝔽.
+                if y.is_nan() {
+                    return Ok(Ordering::Less);
+                }
+
+                // 6. If x < y, return -1𝔽.
+                if x < y {
+                    return Ok(Ordering::Less);
+                }
+
+                // 7. If x > y, return 1𝔽.
+                if x > y {
+                    return Ok(Ordering::Greater);
+                }
+
+                // 8. If x is -0𝔽 and y is +0𝔽, return -1𝔽.
+                if x.is_zero() && y.is_zero() && x.is_sign_negative() && y.is_sign_positive() {
+                    return Ok(Ordering::Less);
+                }
+
+                // 9. If x is +0𝔽 and y is -0𝔽, return 1𝔽.
+                if x.is_zero() && y.is_zero() && x.is_sign_positive() && y.is_sign_negative() {
+                    return Ok(Ordering::Greater);
+                }
+
+                // 10. Return +0𝔽.
+                Ok(Ordering::Equal)
             }
         };
 
@@ -2710,22 +2769,22 @@ impl TypedArray {
     ///  - [ECMAScript reference][spec]
     ///
     /// [spec]: https://tc39.es/ecma262/#sec-get-%typedarray%.prototype-@@tostringtag
-    fn to_string_tag(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    fn to_string_tag(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
         // 1. Let O be the this value.
         // 2. If Type(O) is not Object, return undefined.
         // 3. If O does not have a [[TypedArrayName]] internal slot, return undefined.
-        let obj = this
-            .as_object()
-            .ok_or_else(|| context.construct_type_error("Value is not a typed array object"))?;
-        let obj_borrow = obj.borrow();
-        let o = obj_borrow
-            .as_typed_array()
-            .ok_or_else(|| context.construct_type_error("Value is not a typed array object"))?;
-
         // 4. Let name be O.[[TypedArrayName]].
         // 5. Assert: Type(name) is String.
         // 6. Return name.
-        Ok(o.typed_array_name().name().into())
+        Ok(this
+            .as_object()
+            .map(|obj| {
+                obj.borrow()
+                    .as_typed_array()
+                    .map(|o| o.typed_array_name().name().into())
+            })
+            .flatten()
+            .unwrap_or(JsValue::Undefined))
     }
 
     /// `23.2.4.1 TypedArraySpeciesCreate ( exemplar, argumentList )`

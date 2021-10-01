@@ -1,7 +1,7 @@
 //! Javascript context.
 
 use crate::{
-    builtins::{self, iterable::IteratorPrototypes},
+    builtins::{self, iterable::IteratorPrototypes, typed_array::TypedArray},
     class::{Class, ClassBuilder},
     exec::Interpreter,
     object::{
@@ -366,6 +366,9 @@ pub struct Context {
     /// Cached iterator prototypes.
     iterator_prototypes: IteratorPrototypes,
 
+    /// Cached TypedArray constructor.
+    typed_array_constructor: StandardConstructor,
+
     /// Cached standard objects and their prototypes.
     standard_objects: StandardObjects,
 
@@ -386,6 +389,7 @@ impl Default for Context {
             #[cfg(feature = "console")]
             console: Console::default(),
             iterator_prototypes: IteratorPrototypes::default(),
+            typed_array_constructor: StandardConstructor::default(),
             standard_objects: Default::default(),
             strict: StrictType::Off,
             #[cfg(feature = "vm")]
@@ -400,6 +404,14 @@ impl Default for Context {
         // Add new builtIns to Context Realm
         // At a later date this can be removed from here and called explicitly,
         // but for now we almost always want these default builtins
+        let typed_array_constructor_constructor = TypedArray::init(&mut context);
+        let typed_array_constructor_prototype = typed_array_constructor_constructor
+            .get("prototype", &mut context)
+            .expect("prototype must exist")
+            .as_object()
+            .expect("prototype must be object");
+        context.typed_array_constructor.constructor = typed_array_constructor_constructor;
+        context.typed_array_constructor.prototype = typed_array_constructor_prototype;
         context.create_intrinsics();
         context.iterator_prototypes = IteratorPrototypes::init(&mut context);
         context
@@ -1020,6 +1032,12 @@ impl Context {
     #[inline]
     pub fn iterator_prototypes(&self) -> &IteratorPrototypes {
         &self.iterator_prototypes
+    }
+
+    /// Return the cached TypedArray constructor.
+    #[inline]
+    pub(crate) fn typed_array_constructor(&self) -> &StandardConstructor {
+        &self.typed_array_constructor
     }
 
     /// Return the core standard objects.

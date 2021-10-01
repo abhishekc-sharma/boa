@@ -1,5 +1,3 @@
-use std::convert::TryInto;
-
 use crate::{
     builtins::{typed_array::TypedArrayName, BuiltIn, JsArgs},
     context::StandardObjects,
@@ -14,6 +12,8 @@ use crate::{
     value::{IntegerOrInfinity, Numeric},
     Context, JsResult, JsValue,
 };
+use num_traits::{Signed, ToPrimitive};
+use std::convert::TryInto;
 
 #[derive(Debug, Clone, Trace, Finalize)]
 pub struct ArrayBuffer {
@@ -636,13 +636,45 @@ impl ArrayBuffer {
             }
             TypedArrayName::Uint32Array => value.to_u32(context)?.to_be_bytes().to_vec(),
             TypedArrayName::BigInt64Array if is_little_endian => {
-                value.to_big_int64(context)?.to_bytes_le().1
+                let big_int = value.to_big_int64(context)?;
+                big_int
+                    .to_i64()
+                    .unwrap_or_else(|| {
+                        if big_int.is_positive() {
+                            i64::MAX
+                        } else {
+                            i64::MIN
+                        }
+                    })
+                    .to_le_bytes()
+                    .to_vec()
             }
-            TypedArrayName::BigInt64Array => value.to_big_int64(context)?.to_bytes_be().1,
-            TypedArrayName::BigUint64Array if is_little_endian => {
-                value.to_big_uint64(context)?.to_bytes_le().1
+            TypedArrayName::BigInt64Array => {
+                let big_int = value.to_big_int64(context)?;
+                big_int
+                    .to_i64()
+                    .unwrap_or_else(|| {
+                        if big_int.is_positive() {
+                            i64::MAX
+                        } else {
+                            i64::MIN
+                        }
+                    })
+                    .to_be_bytes()
+                    .to_vec()
             }
-            TypedArrayName::BigUint64Array => value.to_big_uint64(context)?.to_bytes_be().1,
+            TypedArrayName::BigUint64Array if is_little_endian => value
+                .to_big_uint64(context)?
+                .to_u64()
+                .unwrap_or(u64::MAX)
+                .to_le_bytes()
+                .to_vec(),
+            TypedArrayName::BigUint64Array => value
+                .to_big_uint64(context)?
+                .to_u64()
+                .unwrap_or(u64::MAX)
+                .to_be_bytes()
+                .to_vec(),
             TypedArrayName::Float32Array => match value.to_number(context)? {
                 f if is_little_endian => (f as f32).to_le_bytes().to_vec(),
                 f => (f as f32).to_be_bytes().to_vec(),

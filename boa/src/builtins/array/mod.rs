@@ -720,10 +720,11 @@ impl Array {
         let len = o.length_of_array_like(context)?;
         // 3. If separator is undefined, let sep be the single-element String ",".
         // 4. Else, let sep be ? ToString(separator).
-        let separator = if let Some(separator) = args.get(0) {
-            separator.to_string(context)?
-        } else {
+        let separator = args.get_or_undefined(0);
+        let separator = if separator.is_undefined() {
             JsString::new(",")
+        } else {
+            separator.to_string(context)?
         };
 
         // 5. Let R be the empty String.
